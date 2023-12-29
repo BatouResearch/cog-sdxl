@@ -26,7 +26,6 @@ from diffusers.pipelines.stable_diffusion.safety_checker import (
     StableDiffusionSafetyChecker,
 )
 from diffusers.utils import load_image
-from safetensors import safe_open
 from safetensors.torch import load_file
 from transformers import CLIPImageProcessor
 
@@ -73,9 +72,9 @@ class Predictor(BasePredictor):
 
         # weights can be a URLPath, which behaves in unexpected ways
         weights = str(weights)
-        if self.tuned_weights == weights:
-            print("skipping loading .. weights already loaded")
-            return
+        #if self.tuned_weights == weights:
+            #print("skipping loading .. weights already loaded")
+            #return
 
         self.tuned_weights = weights
 
@@ -329,7 +328,7 @@ class Predictor(BasePredictor):
             le=1.0,
             default=0.6,
         ),
-        replicate_weights: str = Input(
+        lora_weights: str = Input(
             description="Replicate LoRA weights to use. Leave blank to use the default weights.",
             default=None,
         ),
@@ -343,8 +342,8 @@ class Predictor(BasePredictor):
             seed = int.from_bytes(os.urandom(2), "big")
         print(f"Using seed: {seed}")
 
-        if replicate_weights:
-            self.load_trained_weights(replicate_weights, self.txt2img_pipe)
+        if lora_weights:
+            self.load_trained_weights(lora_weights, self.txt2img_pipe)
         
         # OOMs can leave vae in bad state
         if self.txt2img_pipe.vae.dtype == torch.float32:
