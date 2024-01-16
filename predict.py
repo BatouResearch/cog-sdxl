@@ -251,13 +251,12 @@ class Predictor(BasePredictor):
             CONTROLNET_CACHE,
             torch_dtype=torch.float16
         )
-        vae = AutoencoderKL.from_pretrained(SD_VAE_CACHE)
+        vae = AutoencoderKL.from_pretrained(SD_VAE_CACHE, torch_dtype=torch.float16)
         self.controlnet_pipe = StableDiffusionControlNetImg2ImgPipeline.from_pretrained(
             SD_MODEL_CACHE,
             torch_dtype=torch.float16,
             controlnet=controlnet,
             vae=vae,
-            variant="fp16",
         )
         self.controlnet_pipe.to("cuda")
 
@@ -450,9 +449,7 @@ class Predictor(BasePredictor):
             sdxl_kwargs["cross_attention_kwargs"] = {"scale": lora_scale}
             
         
-        print("run pipe")
-        #pipe.enable_xformers_memory_efficient_attention()
-        #pipe.enable_vae_tiling()
+        pipe.enable_xformers_memory_efficient_attention()
         output = pipe(**common_args, **sdxl_kwargs)
 
         if refine in ["expert_ensemble_refiner", "base_image_refiner"]:
