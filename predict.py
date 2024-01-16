@@ -256,8 +256,10 @@ class Predictor(BasePredictor):
             SD_MODEL_CACHE,
             torch_dtype=torch.float16,
             controlnet=controlnet,
-            vae=vae
-        ).to("cuda")
+            vae=vae,
+            variant="fp16",
+        )
+        self.controlnet_pipe.to("cuda")
 
         print("setup took: ", time.time() - start)
         # self.txt2img_pipe.__class__.encode_prompt = new_encode_prompt
@@ -316,7 +318,7 @@ class Predictor(BasePredictor):
             default="K_EULER",
         ),
         num_inference_steps: int = Input(
-            description="Number of denoising steps", ge=1, le=500, default=50
+            description="Number of denoising steps", ge=1, le=500, default=30
         ),
         guidance_scale: float = Input(
             description="Scale for classifier-free guidance", ge=1, le=50, default=7.5
@@ -446,7 +448,11 @@ class Predictor(BasePredictor):
 
         if self.is_lora:
             sdxl_kwargs["cross_attention_kwargs"] = {"scale": lora_scale}
-
+            
+        
+        print("run pipe")
+        #pipe.enable_xformers_memory_efficient_attention()
+        #pipe.enable_vae_tiling()
         output = pipe(**common_args, **sdxl_kwargs)
 
         if refine in ["expert_ensemble_refiner", "base_image_refiner"]:
@@ -460,9 +466,12 @@ class Predictor(BasePredictor):
                 common_args["num_inference_steps"] = refine_steps
 
             output = self.refiner(**common_args, **refiner_kwargs)
+        
 
         if tile_refine:
             tile_refiner_kwargs = {
+                "image": output.images,
+                "control_image": output.images,
                 "controlnet_conditioning_scale": tile_refine_conditioning_strength,
                 "strength": tile_refine_strength
             }
