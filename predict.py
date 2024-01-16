@@ -20,6 +20,9 @@ from diffusers import (
     PNDMScheduler,
     StableDiffusionXLImg2ImgPipeline,
     StableDiffusionXLInpaintPipeline,
+    ControlNetModel,
+    StableDiffusionControlNetImg2ImgPipeline,
+    AutoencoderKL
 )
 from diffusers.models.attention_processor import LoRAAttnProcessor2_0
 from diffusers.pipelines.stable_diffusion.safety_checker import (
@@ -32,16 +35,19 @@ from transformers import CLIPImageProcessor
 
 from dataset_and_utils import TokenEmbeddingsHandler
 
-SDXL_MODEL_CACHE = "./sdxl-cache"
+SDXL_MODEL_CACHE    = "./sdxl-cache"
 REFINER_MODEL_CACHE = "./refiner-cache"
-SAFETY_CACHE = "./safety-cache"
-FEATURE_EXTRACTOR = "./feature-extractor"
-SDXL_URL = "https://weights.replicate.delivery/default/sdxl/sdxl-vae-upcast-fix.tar"
-REFINER_URL = (
-    "https://weights.replicate.delivery/default/sdxl/refiner-no-vae-no-encoder-1.0.tar"
-)
-SAFETY_URL = "https://weights.replicate.delivery/default/sdxl/safety-1.0.tar"
-
+SAFETY_CACHE        = "./safety-cache"
+FEATURE_EXTRACTOR   = "./feature-extractor"
+CONTROLNET_CACHE    = "./controlnet-cache"
+SD_MODEL_CACHE      = "./sd-cache"
+SD_VAE_CACHE        = "./sd-vae-cache"
+SDXL_URL            = "https://weights.replicate.delivery/default/sdxl/sdxl-vae-upcast-fix.tar"
+REFINER_URL         = "https://weights.replicate.delivery/default/sdxl/refiner-no-vae-no-encoder-1.0.tar"
+SAFETY_URL          = "https://weights.replicate.delivery/default/sdxl/safety-1.0.tar"
+CONTROLNET_URL      = "https://weights.replicate.delivery/default/sdxl" # TODO
+SD_MODEL_URL        = "https://weights.replicate.delivery/default/sdxl" # TODO
+SD_VAE_URL          = "https://weights.replicate.delivery/default/sdxl" # TODO
 
 class KarrasDPM:
     def from_config(config):
@@ -175,6 +181,7 @@ class Predictor(BasePredictor):
         self.feature_extractor = CLIPImageProcessor.from_pretrained(FEATURE_EXTRACTOR)
 
         if not os.path.exists(SDXL_MODEL_CACHE):
+            # After a training
             download_weights(SDXL_URL, SDXL_MODEL_CACHE)
 
         print("Loading sdxl txt2img pipeline...")
@@ -233,6 +240,25 @@ class Predictor(BasePredictor):
             variant="fp16",
         )
         self.refiner.to("cuda")
+
+        if not os.path.exists(SD_MODEL_CACHE): # True after a training
+            download_weights(SD_MODEL_URL, SD_MODEL_CACHE)
+            download_weights(SD_VAE_URL, SD_VAE_CACHE)
+            download_weights(CONTROLNET_URL, CONTROLNET_CACHE)
+
+        print("Loading controlnet refiner pipeline...")
+        controlnet = ControlNetModel.from_pretrained(
+            CONTROLNET_CACHE,
+            torch_dtype=torch.float16
+        )
+        vae = AutoencoderKL.from_pretrained(SD_VAE_CACHE)
+        self.controlnet_pipe = StableDiffusionControlNetImg2ImgPipeline.from_pretrained(
+            SD_MODEL_CACHE,
+            torch_dtype=torch.float16,
+            controlnet=controlnet,
+            vae=vae
+        ).to("cuda")
+
         print("setup took: ", time.time() - start)
         # self.txt2img_pipe.__class__.encode_prompt = new_encode_prompt
 
@@ -318,6 +344,26 @@ class Predictor(BasePredictor):
         refine_steps: int = Input(
             description="For base_image_refiner, the number of steps to refine, defaults to num_inference_steps",
             default=None,
+        ),
+        tile_refine : bool = Input(
+            description="Will run after sdxl and refiner",
+            default=False,
+        ),
+        tile_refine_strength: float = Input(
+            description="Prompt strength when using tile_refine, can be understood as Creativity",
+            ge=0.0,
+            le=1.0,
+            default=0.5,
+        ),
+        tile_refine_conditioning_strength: float = Input(
+            description="Conditioning strength when using tile_refine, can be understood as Resemblance",
+            ge=0.0,
+            le=1.0,
+            default=0.5,
+        ),
+        tile_refine_steps : int = Input(
+            description="tile_refine's number of denoising steps",
+            ge=1, le=500, default=20
         ),
         apply_watermark: bool = Input(
             description="Applies a watermark to enable determining if an image is generated in downstream applications. If you have other provisions for generating or deploying images safely, you can use this to disable watermarking.",
@@ -414,6 +460,15 @@ class Predictor(BasePredictor):
                 common_args["num_inference_steps"] = refine_steps
 
             output = self.refiner(**common_args, **refiner_kwargs)
+
+        if tile_refine:
+            tile_refiner_kwargs = {
+                "controlnet_conditioning_scale": tile_refine_conditioning_strength,
+                "strength": tile_refine_strength
+            }
+            common_args["num_inference_steps"] = tile_refine_steps
+            output = self.controlnet_pipe(**common_args, **tile_refiner_kwargs)
+
 
         if not apply_watermark:
             pipe.watermark = watermark_cache

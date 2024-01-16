@@ -3,7 +3,7 @@
 # internet, which will take a long time.
 
 import torch
-from diffusers import AutoencoderKL, DiffusionPipeline
+from diffusers import AutoencoderKL, DiffusionPipeline, ControlNetModel
 from diffusers.pipelines.stable_diffusion.safety_checker import (
     StableDiffusionSafetyChecker,
 )
@@ -28,7 +28,6 @@ pipe = DiffusionPipeline.from_pretrained(
     use_safetensors=True,
     variant="fp16",
 )
-
 pipe.save_pretrained("./sdxl-cache", safe_serialization=True)
 
 pipe = DiffusionPipeline.from_pretrained(
@@ -37,14 +36,30 @@ pipe = DiffusionPipeline.from_pretrained(
     use_safetensors=True,
     variant="fp16",
 )
-
 # TODO - we don't need to save all of this and in fact should save just the unet, tokenizer, and config.
 pipe.save_pretrained("./refiner-cache", safe_serialization=True)
-
 
 safety = StableDiffusionSafetyChecker.from_pretrained(
     "CompVis/stable-diffusion-safety-checker",
     torch_dtype=torch.float16,
 )
-
 safety.save_pretrained("./safety-cache")
+
+# ControlNet Tile Refiner
+controlnet = ControlNetModel.from_pretrained(
+    "lllyasviel/control_v11f1e_sd15_tile",
+    torch_dtype=torch.float16,
+    cache_dir="./controlnet-cache"
+)
+controlnet.save_pretrained("./controlnet-cache")
+
+vae = AutoencoderKL.from_pretrained("stabilityai/sd-vae-ft-ema")
+vae.save_pretrained("./sd-vae-cache")
+
+pipe = DiffusionPipeline.from_pretrained(
+    "SG161222/Realistic_Vision_V5.1_noVAE",
+    torch_dtype=torch.float16,
+    cache_dir="./sd-cache",
+    vae=vae
+)
+pipe.save_pretrained("./sd-cache")
