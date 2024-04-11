@@ -66,28 +66,12 @@ SCHEDULERS = {
 }
 
 
-class WeightsDownloader:
-    @staticmethod
-    def download_if_not_exists(url, dest):
-        if not os.path.exists(dest):
-            WeightsDownloader.download(url, dest)
-
-    @staticmethod
-    def download(url, dest):
-        start = time.time()
-        print("downloading url: ", url)
-        print("downloading to: ", dest)
-        subprocess.check_call(["pget", "-x", url, dest], close_fds=False)
-        print("downloading took: ", time.time() - start)
-
 def download_weights(url, dest):
     start = time.time()
     print("downloading url: ", url)
     print("downloading to: ", dest)
     subprocess.check_call(["pget", "-x", url, dest], close_fds=False)
     print("downloading took: ", time.time() - start)
-
-
 
 
 class Predictor(BasePredictor):
@@ -182,7 +166,7 @@ class Predictor(BasePredictor):
         assert len(urllists) == len(scales), "Number of LoRAs and scales must match."
         adapter_names = []
         for i,lora in enumerate(urllists):
-            WeightsDownloader.download_if_not_exists(lora, LORA_CACHE)
+            download_weights(lora, LORA_CACHE)
             self.txt2img_pipe.load_lora_weights(LORA_CACHE, adapter_name=str(i))
             adapter_names.append(str(i))
             shutil.rmtree(LORA_CACHE)
@@ -373,7 +357,7 @@ class Predictor(BasePredictor):
             description="For base_image_refiner, the number of steps to refine, defaults to num_inference_steps",
             default=None,
         ),
-        tile_refine : bool = Input(
+        tile_refine: bool = Input(
             description="Will run after sdxl and refiner",
             default=False,
         ),
@@ -396,12 +380,6 @@ class Predictor(BasePredictor):
         apply_watermark: bool = Input(
             description="Applies a watermark to enable determining if an image is generated in downstream applications. If you have other provisions for generating or deploying images safely, you can use this to disable watermarking.",
             default=True,
-        ),
-        lora_scale: float = Input(
-            description="LoRA additive scale. Only applicable on trained models.",
-            ge=0.0,
-            le=1.0,
-            default=0.6,
         ),
         replicate_weights: str = Input(
             description="Replicate LoRA weights to use. Leave blank to use the default weights.",
@@ -435,8 +413,6 @@ class Predictor(BasePredictor):
             self.set_lora(lora_urls, lora_scales)
         else:
             print("No LoRA models provided, using default model...")
-            monkeypatch_remove_lora(self.pipe.unet)
-            monkeypatch_remove_lora(self.pipe.text_encoder)
         
         # OOMs can leave vae in bad state
         if self.txt2img_pipe.vae.dtype == torch.float32:
@@ -489,10 +465,6 @@ class Predictor(BasePredictor):
             "generator": generator,
             "num_inference_steps": num_inference_steps,
         }
-
-        if self.is_lora:
-            sdxl_kwargs["cross_attention_kwargs"] = {"scale": lora_scale}
-            
         
         pipe.enable_xformers_memory_efficient_attention()
         output = pipe(**common_args, **sdxl_kwargs)
@@ -508,7 +480,6 @@ class Predictor(BasePredictor):
                 common_args["num_inference_steps"] = refine_steps
 
             output = self.refiner(**common_args, **refiner_kwargs)
-        
 
         if tile_refine:
             tile_refiner_kwargs = {
@@ -519,7 +490,6 @@ class Predictor(BasePredictor):
             }
             common_args["num_inference_steps"] = tile_refine_steps
             output = self.controlnet_pipe(**common_args, **tile_refiner_kwargs)
-
 
         if not apply_watermark:
             pipe.watermark = watermark_cache
@@ -542,5 +512,7 @@ class Predictor(BasePredictor):
             raise Exception(
                 f"NSFW content detected. Try running it again, or try a different prompt."
             )
+
+        pipe.unload_lora_weights()
 
         return output_paths
