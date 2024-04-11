@@ -180,13 +180,13 @@ class Predictor(BasePredictor):
 
     def set_lora(self, urllists: List[str], scales: List[float]):
         assert len(urllists) == len(scales), "Number of LoRAs and scales must match."
-
+        adapter_names = []
         for i,lora in enumerate(urllists):
             WeightsDownloader.download_if_not_exists(lora, LORA_CACHE)
             self.txt2img_pipe.load_lora_weights(LORA_CACHE, adapter_name=str(i))
-            self.txt2img_pipe.fuse_lora(lora_scale=scales[i])
+            adapter_names.append(str(i))
             shutil.rmtree(LORA_CACHE)
-        self.txt2img_pipe.unload_lora_weights()
+        self.txt2img_pipe.set_adapters(adapter_names, adapter_weights=scales)
 
     def setup(self, weights: Optional[Path] = None):
         """Load the model into memory to make running multiple predictions efficient"""
@@ -430,6 +430,7 @@ class Predictor(BasePredictor):
 
         if len(lora_weights) > 0:
             lora_urls = [u.strip() for u in lora_weights.split("|")]
+            print("Using ", len(lora_urls), " weights.")
             lora_scales = [float(s.strip()) for s in lora_scales.split("|")]
             self.set_lora(lora_urls, lora_scales)
         else:
