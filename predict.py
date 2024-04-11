@@ -40,6 +40,7 @@ REFINER_MODEL_CACHE = "./refiner-cache"
 SAFETY_CACHE        = "./safety-cache"
 FEATURE_EXTRACTOR   = "./feature-extractor"
 CONTROLNET_CACHE    = "./controlnet-cache"
+LORA_CACHE = "./lora-cache"
 SD_MODEL_CACHE      = "./sd-cache"
 SD_VAE_CACHE        = "./sd-vae-cache"
 SDXL_URL            = "https://weights.replicate.delivery/default/sdxl/sdxl-vae-upcast-fix.tar"
@@ -65,12 +66,28 @@ SCHEDULERS = {
 }
 
 
+class WeightsDownloader:
+    @staticmethod
+    def download_if_not_exists(url, dest):
+        if not os.path.exists(dest):
+            WeightsDownloader.download(url, dest)
+
+    @staticmethod
+    def download(url, dest):
+        start = time.time()
+        print("downloading url: ", url)
+        print("downloading to: ", dest)
+        subprocess.check_call(["pget", "-x", url, dest], close_fds=False)
+        print("downloading took: ", time.time() - start)
+
 def download_weights(url, dest):
     start = time.time()
     print("downloading url: ", url)
     print("downloading to: ", dest)
     subprocess.check_call(["pget", "-x", url, dest], close_fds=False)
     print("downloading took: ", time.time() - start)
+
+
 
 
 class Predictor(BasePredictor):
@@ -160,6 +177,16 @@ class Predictor(BasePredictor):
         self.token_map = params
 
         self.tuned_model = True
+
+    def set_lora(self, urllists: List[str], scales: List[float]):
+        assert len(urllists) == len(scales), "Number of LoRAs and scales must match."
+
+        for i,lora in enumerate(urllists):
+            WeightsDownloader.download_if_not_exists(lora, LORA_CACHE)
+            self.txt2img_pipe.load_lora_weights(LORA_CACHE, adapter_name=str(i))
+            self.txt2img_pipe.fuse_lora(lora_scale=scales[i])
+            shutil.rmtree(LORA_CACHE)
+        self.txt2img_pipe.unload_lora_weights()
 
     def setup(self, weights: Optional[Path] = None):
         """Load the model into memory to make running multiple predictions efficient"""
@@ -380,6 +407,14 @@ class Predictor(BasePredictor):
             description="Replicate LoRA weights to use. Leave blank to use the default weights.",
             default=None,
         ),
+        lora_weights: str = Input(
+            description="LoRA weights",
+            default=None,
+        ),
+        lora_scales: str = Input(
+            description="LoRA scales",
+            default=None
+        ),
         disable_safety_checker: bool = Input(
             description="Disable safety checker for generated images. This feature is only available through the API. See [https://replicate.com/docs/how-does-replicate-work#safety](https://replicate.com/docs/how-does-replicate-work#safety)",
             default=False
@@ -392,6 +427,15 @@ class Predictor(BasePredictor):
 
         if replicate_weights:
             self.load_trained_weights(replicate_weights, self.txt2img_pipe)
+
+        if len(lora_weights) > 0:
+            lora_urls = [u.strip() for u in lora_weights.split("|")]
+            lora_scales = [float(s.strip()) for s in lora_scales.split("|")]
+            self.set_lora(lora_urls, lora_scales)
+        else:
+            print("No LoRA models provided, using default model...")
+            monkeypatch_remove_lora(self.pipe.unet)
+            monkeypatch_remove_lora(self.pipe.text_encoder)
         
         # OOMs can leave vae in bad state
         if self.txt2img_pipe.vae.dtype == torch.float32:

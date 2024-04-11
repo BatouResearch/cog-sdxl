@@ -7,6 +7,17 @@ from diffusers import AutoencoderKL, DiffusionPipeline, ControlNetModel
 from diffusers.pipelines.stable_diffusion.safety_checker import (
     StableDiffusionSafetyChecker,
 )
+import subprocess
+import time
+
+
+def download_weights(url, dest):
+    start = time.time()
+    print("downloading url: ", url)
+    print("downloading to: ", dest)
+    subprocess.check_call(["pget", "-x", url, dest], close_fds=False)
+    print("downloading took: ", time.time() - start)
+
 
 # pipe = DiffusionPipeline.from_pretrained(
 #     "stabilityai/stable-diffusion-xl-base-1.0",
@@ -21,6 +32,8 @@ better_vae = AutoencoderKL.from_pretrained(
     "madebyollin/sdxl-vae-fp16-fix", torch_dtype=torch.float16
 )
 
+download_weights("https://replicate.delivery/pbxt/0s4vPNvcbezfHECtWfHtm0PEVVf1GFxTSS4CMBSETQkUyhkKB/trained_model.tar", "./base-cache")
+
 pipe = DiffusionPipeline.from_pretrained(
     "stabilityai/stable-diffusion-xl-base-1.0",
     vae=better_vae,
@@ -28,6 +41,7 @@ pipe = DiffusionPipeline.from_pretrained(
     use_safetensors=True,
     variant="fp16",
 )
+pipe.load_lora_weights("./base-cache")
 pipe.save_pretrained("./sdxl-cache", safe_serialization=True)
 
 pipe = DiffusionPipeline.from_pretrained(
